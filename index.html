@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文字差異比較工具</title>
+<meta name="description" content="在瀏覽器中比較兩段文字的差異，所有處理都在本機完成，資料不會上傳。">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --text:#1f2328; --muted:#656d76; --border:#d0d7de; --accent:#0969da;
+  --del-bg:#ffebe9; --del-hl:#ff818273; --del-fg:#cf222e;
+  --add-bg:#e6ffec; --add-hl:#4ac26b73; --add-fg:#1a7f37;
+  --empty:#f6f8fa; --fold:#ddf4ff; --ln:#8c959f;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono","Noto Sans Mono CJK TC","Microsoft JhengHei",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0d1117; --panel:#161b22; --text:#e6edf3; --muted:#8d96a0; --border:#30363d; --accent:#4493f8;
+    --del-bg:#f8514926; --del-hl:#f8514970; --del-fg:#ff7b72;
+    --add-bg:#2ea04326; --add-hl:#2ea04370; --add-fg:#3fb950;
+    --empty:#0d1117; --fold:#388bfd1f; --ln:#6e7681;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);line-height:1.5;
+  font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",sans-serif}
+.wrap{max-width:1400px;margin:0 auto;padding:20px 16px 40px}
+header h1{font-size:1.4rem;margin:0}
+header p{margin:4px 0 16px;color:var(--muted);font-size:.9rem}
+
+.inputs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:760px){.inputs{grid-template-columns:1fr}}
+.pane{background:var(--panel);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
+.pane-head{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border)}
+.pane-head strong{font-size:.95rem}
+.pane-head .meta{color:var(--muted);font-size:.8rem;margin-left:auto}
+textarea{border:0;resize:vertical;min-height:220px;padding:10px;width:100%;outline:none;
+  font:14px/1.5 var(--mono);background:transparent;color:inherit}
+textarea.drag{background:var(--fold)}
+
+button,select{font:inherit;font-size:.85rem;padding:4px 10px;border:1px solid var(--border);border-radius:6px;
+  background:var(--panel);color:inherit;cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+
+.toolbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:14px 0;padding:10px 12px;
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:.9rem}
+.group{display:flex;align-items:center;gap:6px}
+.group .lbl{color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.seg input{position:absolute;opacity:0;width:0;height:0}
+.seg label{padding:3px 12px;cursor:pointer;border-left:1px solid var(--border);user-select:none}
+.seg label:first-of-type{border-left:0}
+.seg input:checked+label{background:var(--accent);color:#fff}
+.seg input:focus-visible+label{outline:2px solid var(--accent);outline-offset:-2px}
+.check{display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none}
+.actions{margin-left:auto;display:flex;gap:6px}
+
+.summary{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-bottom:8px;font-size:.9rem;color:var(--muted);min-height:1.5em}
+.badge{padding:1px 8px;border-radius:999px;font-weight:600;font-size:.82rem}
+.badge.add{background:var(--add-bg);color:var(--add-fg)}
+.badge.del{background:var(--del-bg);color:var(--del-fg)}
+.badge.same{background:var(--fold);color:var(--accent)}
+.warn{color:var(--del-fg)}
+
+.result{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:auto}
+.placeholder{padding:32px;text-align:center;color:var(--muted)}
+table.diff{width:100%;border-collapse:collapse;table-layout:fixed;font:13px/1.6 var(--mono)}
+table.diff td{padding:0 8px;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}
+table.diff col.ln{width:3.8em}
+table.diff col.sg{width:1.8em}
+td.ln{text-align:right;color:var(--ln);user-select:none;padding:0 6px}
+td.sg{text-align:center;user-select:none;padding:0}
+td.del{background:var(--del-bg)}
+td.add{background:var(--add-bg)}
+td.sg.del{color:var(--del-fg)}
+td.sg.add{color:var(--add-fg)}
+td.empty{background:repeating-linear-gradient(-45deg,var(--empty),var(--empty) 4px,transparent 4px,transparent 8px)}
+td.split{border-right:1px solid var(--border)}
+table.diff del,table.diff ins{text-decoration:none;border-radius:2px}
+table.diff del{background:var(--del-hl)}
+table.diff ins{background:var(--add-hl)}
+tr.fold td{background:var(--fold);color:var(--accent);text-align:center;cursor:pointer;padding:2px;
+  font-family:system-ui,sans-serif;font-size:.82rem;user-select:none}
+tr.fold:hover td{text-decoration:underline}
+
+.flow{padding:12px 14px;white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.75 var(--mono)}
+.flow del{background:var(--del-hl);color:var(--del-fg);text-decoration:line-through;border-radius:2px}
+.flow ins{background:var(--add-hl);color:var(--add-fg);text-decoration:none;border-radius:2px}
+
+footer{margin-top:24px;color:var(--muted);font-size:.8rem;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>文字差異比較工具</h1>
+    <p>貼上兩段文字，立即標示新增、刪除與修改的部分。所有處理都在你的瀏覽器中完成，文字不會上傳到任何伺服器。</p>
+  </header>
+
+  <section class="inputs">
+    <div class="pane">
+      <div class="pane-head">
+        <strong>原始文字</strong>
+        <button type="button" data-open="textA" title="開啟文字檔">開啟檔案</button>
+        <span class="meta" id="metaA"></span>
+      </div>
+      <textarea id="textA" spellcheck="false" placeholder="在此貼上原始文字，或把檔案拖曳進來…"></textarea>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <strong>修改後文字</strong>
+        <button type="button" data-open="textB" title="開啟文字檔">開啟檔案</button>
+        <span class="meta" id="metaB"></span>
+      </div>
+      <textarea id="textB" spellcheck="false" placeholder="在此貼上修改後的文字，或把檔案拖曳進來…"></textarea>
+    </div>
+  </section>
+  <input type="file" id="fileInput" accept=".txt,.md,.csv,.tsv,.json,.xml,.html,.htm,.css,.js,.ts,.py,.log,.ini,.yml,.yaml,text/*" hidden>
+
+  <section class="toolbar">
+    <div class="group">
+      <span class="lbl">檢視</span>
+      <div class="seg" role="radiogroup">
+        <input type="radio" name="view" id="v-sbs" value="sbs" checked><label for="v-sbs">並排</label>
+        <input type="radio" name="view" id="v-uni" value="unified"><label for="v-uni">整合</label>
+        <input type="radio" name="view" id="v-flow" value="flow"><label for="v-flow">文字流</label>
+      </div>
+    </div>
+    <div class="group">
+      <span class="lbl">精細度</span>
+      <select id="gran">
+        <option value="word">字詞</option>
+        <option value="char">字元</option>
+      </select>
+    </div>
+    <label class="check"><input type="checkbox" id="ignoreWs">忽略空白差異</label>
+    <label class="check"><input type="checkbox" id="ignoreCase">忽略大小寫</label>
+    <label class="check"><input type="checkbox" id="onlyDiff">只顯示差異</label>
+    <div class="actions">
+      <button type="button" id="btnSwap" title="交換左右兩邊">⇄ 交換</button>
+      <button type="button" id="btnClear">清除</button>
+    </div>
+  </section>
+
+  <div class="summary" id="summary"></div>
+  <section class="result" id="output"><div class="placeholder">輸入兩段文字後，差異會顯示在這裡。</div></section>
+
+  <footer>純前端靜態網頁 · 使用 Myers 差異演算法</footer>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const taA = $('#textA'), taB = $('#textB');
+const out = $('#output'), summary = $('#summary');
+const TIME_LIMIT = 2000; // 單次比對的時間上限（毫秒），超過就簡化輸出
+const CONTEXT = 3;       // 「只顯示差異」時保留的上下文行數
+let approx = false;
+let folds = [];
+
+const esc = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- Myers diff ---------- */
+// 回傳 ops：[type, ai, bi]，type 0=相同, -1=刪除, 1=新增
+// 線性記憶體版本（middle snake 分治），並設有時間上限避免卡住瀏覽器
+function diff(a, b) {
+  const out = [];
+  core(a, 0, a.length, b, 0, b.length, out, performance.now() + TIME_LIMIT);
+  return out;
+}
+
+function core(a, ao, n, b, bo, m, out, deadline) {
+  let p = 0;
+  while (p < n && p < m && a[ao + p] === b[bo + p]) { out.push([0, ao + p, bo + p]); p++; }
+  ao += p; bo += p; n -= p; m -= p;
+  let s = 0;
+  while (s < n && s < m && a[ao + n - 1 - s] === b[bo + m - 1 - s]) s++;
+  n -= s; m -= s;
+
+  const sp = (n && m) ? bisect(a, ao, n, b, bo, m, deadline) : null;
+  if (sp && !(sp[0] === 0 && sp[1] === 0) && !(sp[0] === n && sp[1] === m)) {
+    core(a, ao, sp[0], b, bo, sp[1], out, deadline);
+    core(a, ao + sp[0], n - sp[0], b, bo + sp[1], m - sp[1], out, deadline);
+  } else {
+    for (let i = 0; i < n; i++) out.push([-1, ao + i, -1]);
+    for (let j = 0; j < m; j++) out.push([1, -1, bo + j]);
+  }
+  for (let i = 0; i < s; i++) out.push([0, ao + n + i, bo + m + i]);
+}
+
+function bisect(a, ao, n, b, bo, m, deadline) {
+  const maxD = Math.ceil((n + m) / 2), off = maxD, len = 2 * maxD;
+  const v1 = new Int32Array(len).fill(-1), v2 = new Int32Array(len).fill(-1);
+  v1[off + 1] = 0; v2[off + 1] = 0;
+  const delta = n - m, front = (delta & 1) !== 0;
+  let k1s = 0, k1e = 0, k2s = 0, k2e = 0;
+  for (let d = 0; d < maxD; d++) {
+    if ((d & 31) === 0 && performance.now() > deadline) { approx = true; return null; }
+    for (let k1 = -d + k1s; k1 <= d - k1e; k1 += 2) {
+      const i1 = off + k1;
+      let x1 = (k1 === -d || (k1 !== d && v1[i1 - 1] < v1[i1 + 1])) ? v1[i1 + 1] : v1[i1 - 1] + 1;
+      let y1 = x1 - k1;
+      while (x1 < n && y1 < m && a[ao + x1] === b[bo + y1]) { x1++; y1++; }
+      v1[i1] = x1;
+      if (x1 > n) k1e += 2;
+      else if (y1 > m) k1s += 2;
+      else if (front) {
+        const i2 = off + delta - k1;
+        if (i2 >= 0 && i2 < len && v2[i2] !== -1 && x1 >= n - v2[i2]) return [x1, y1];
+      }
+    }
+    for (let k2 = -d + k2s; k2 <= d - k2e; k2 += 2) {
+      const i2 = off + k2;
+      let x2 = (k2 === -d || (k2 !== d && v2[i2 - 1] < v2[i2 + 1])) ? v2[i2 + 1] : v2[i2 - 1] + 1;
+      let y2 = x2 - k2;
+      while (x2 < n && y2 < m && a[ao + n - x2 - 1] === b[bo + m - y2 - 1]) { x2++; y2++; }
+      v2[i2] = x2;
+      if (x2 > n) k2e += 2;
+      else if (y2 > m) k2s += 2;
+      else if (!front) {
+        const i1 = off + delta - k2;
+        if (i1 >= 0 && i1 < len && v1[i1] !== -1) {
+          const x1 = v1[i1], y1 = off + x1 - i1;
+          if (x1 >= n - x2) return [x1, y1];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/* ---------- 斷詞與正規化 ---------- */
+const CJK = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}';
+const WORD_RE = new RegExp(`[${CJK}]|(?:(?![${CJK}])[\\p{L}\\p{N}\\p{M}_])+|\\s+|[^]`, 'gu');
+const tokenize = (s, gran) => gran === 'char' ? Array.from(s) : (s.match(WORD_RE) || []);
+const splitLines = s => s === '' ? [] : s.split(/\r\n|\r|\n/);
+
+function lineNorm(o) {
+  return s => {
+    if (o.ignoreWs) s = s.trim().replace(/\s+/g, ' ');
+    if (o.ignoreCase) s = s.toLowerCase();
+    return s;
+  };
+}
+function tokNorm(o) {
+  return s => {
+    if (o.ignoreWs && /^\s+$/.test(s)) return ' ';
+    if (o.ignoreCase) s = s.toLowerCase();
+    return s;
+  };
+}
+// 把字串轉成整數 id，加快比對
+function toIds(A, B, norm) {
+  const map = new Map();
+  const f = x => { const k = norm(x); let id = map.get(k); if (id === undefined) { id = map.size; map.set(k, id); } return id; };
+  return [A.map(f), B.map(f)];
+}
+
+// 將 token 層級的 ops 轉成片段：相同 / 刪除 / 新增（同一個變更區塊內先刪後增）
+function toSegments(ops, ta, tb) {
+  const segs = [];
+  let del = '', ins = '';
+  const push = (t, s) => {
+    if (!s) return;
+    const last = segs[segs.length - 1];
+    if (last && last[0] === t) last[1] += s; else segs.push([t, s]);
+  };
+  const flush = () => { push(-1, del); push(1, ins); del = ins = ''; };
+  for (const [t, i, j] of ops) {
+    if (t === 0) { flush(); push(0, tb[j]); }
+    else if (t === -1) del += ta[i];
+    else ins += tb[j];
+  }
+  flush();
+  return segs;
+}
+
+/* ---------- 行內差異 ---------- */
+function inlineDiff(a, b, o) {
+  const ta = tokenize(a, o.gran), tb = tokenize(b, o.gran);
+  const [ia, ib] = toIds(ta, tb, tokNorm(o));
+  const ops = diff(ia, ib);
+  let same = 0;
+  for (const op of ops) if (op[0] === 0) same += ta[op[1]].length;
+  // 相似度太低時不做細部標示，避免畫面破碎
+  if (same * 2 / ((a.length + b.length) || 1) < 0.25) return [esc(a), esc(b)];
+  let left = '', right = '';
+  for (const [t, i, j] of ops) {
+    if (t === 0) { left += esc(ta[i]); right += esc(tb[j]); }
+    else if (t === -1) left += '<del>' + esc(ta[i]) + '</del>';
+    else right += '<ins>' + esc(tb[j]) + '</ins>';
+  }
+  return [left.replace(/<\/del><del>/g, ''), right.replace(/<\/ins><ins>/g, '')];
+}
+
+/* ---------- 逐行比較 ---------- */
+function buildRows(la, lb, o) {
+  const [ia, ib] = toIds(la, lb, lineNorm(o));
+  const ops = diff(ia, ib);
+  const rows = [];
+  let dels = [], adds = [];
+  const flush = () => {
+    const n = Math.max(dels.length, adds.length);
+    for (let k = 0; k < n; k++) {
+      const a = k < dels.length ? dels[k] : -1, b = k < adds.length ? adds[k] : -1;
+      rows.push({ t: a >= 0 && b >= 0 ? 'mod' : a >= 0 ? 'del' : 'add', a, b });
+    }
+    dels = []; adds = [];
+  };
+  for (const [t, i, j] of ops) {
+    if (t === 0) { flush(); rows.push({ t: 'eq', a: i, b: j }); }
+    else if (t === -1) dels.push(i);
+    else adds.push(j);
+  }
+  flush();
+  return rows;
+}
+
+function rowHtmlSbs(r, la, lb, o) {
+  const ln = (i, cls) => `<td class="ln ${cls}">${i + 1}</td>`;
+  const emptyCells = (split) => `<td class="ln empty"></td><td class="empty${split ? ' split' : ''}"></td>`;
+  if (r.t === 'eq')
+    return `<tr>${ln(r.a, '')}<td class="split">${esc(la[r.a])}</td>${ln(r.b, '')}<td>${esc(lb[r.b])}</td></tr>`;
+  if (r.t === 'del')
+    return `<tr>${ln(r.a, 'del')}<td class="del split">${esc(la[r.a])}</td>${emptyCells(false)}</tr>`;
+  if (r.t === 'add')
+    return `<tr>${emptyCells(true)}${ln(r.b, 'add')}<td class="add">${esc(lb[r.b])}</td></tr>`;
+  const [l, rr] = inlineDiff(la[r.a], lb[r.b], o);
+  return `<tr>${ln(r.a, 'del')}<td class="del split">${l}</td>${ln(r.b, 'add')}<td class="add">${rr}</td></tr>`;
+}
+
+function rowHtmlUni(r, la, lb, o) {
+  const line = (a, b, sg, cls, html) =>
+    `<tr><td class="ln ${cls}">${a >= 0 ? a + 1 : ''}</td><td class="ln ${cls}">${b >= 0 ? b + 1 : ''}</td>` +
+    `<td class="sg ${cls}">${sg}</td><td class="${cls}">${html}</td></tr>`;
+  if (r.t === 'eq') return line(r.a, r.b, '', '', esc(lb[r.b]));
+  if (r.t === 'del') return line(r.a, -1, '−', 'del', esc(la[r.a]));
+  if (r.t === 'add') return line(-1, r.b, '+', 'add', esc(lb[r.b]));
+  const [l, rr] = inlineDiff(la[r.a], lb[r.b], o);
+  return line(r.a, -1, '−', 'del', l) + line(-1, r.b, '+', 'add', rr);
+}
+
+function renderLines(A, B, o) {
+  const la = splitLines(A), lb = splitLines(B);
+  const rows = buildRows(la, lb, o);
+  let added = 0, removed = 0, same = 0;
+  for (const r of rows) {
+    if (r.t === 'eq') same++;
+    if (r.t === 'add' || r.t === 'mod') added++;
+    if (r.t === 'del' || r.t === 'mod') removed++;
+  }
+
+  // 決定哪些行要顯示
+  const show = new Uint8Array(rows.length);
+  if (o.onlyDiff) {
+    rows.forEach((r, i) => {
+      if (r.t !== 'eq') for (let k = Math.max(0, i - CONTEXT); k <= Math.min(rows.length - 1, i + CONTEXT); k++) show[k] = 1;
+    });
+  } else show.fill(1);
+
+  const sbs = o.view === 'sbs';
+  const rowHtml = sbs ? rowHtmlSbs : rowHtmlUni;
+  const cols = sbs
+    ? '<colgroup><col class="ln"><col><col class="ln"><col></colgroup>'
+    : '<colgroup><col class="ln"><col class="ln"><col class="sg"><col></colgroup>';
+  folds = [];
+  let html = '', i = 0;
+  while (i < rows.length) {
+    if (show[i]) { html += rowHtml(rows[i], la, lb, o); i++; continue; }
+    let j = i, hidden = '';
+    while (j < rows.length && !show[j]) { hidden += rowHtml(rows[j], la, lb, o); j++; }
+    folds.push(hidden);
+    html += `<tr class="fold" data-fold="${folds.length - 1}"><td colspan="4">⋯ 展開 ${j - i} 行相同內容</td></tr>`;
+    i = j;
+  }
+  out.innerHTML = rows.length
+    ? `<table class="diff">${cols}<tbody>${html}</tbody></table>`
+    : '<div class="placeholder">（兩邊都是空的）</div>';
+
+  const total = la.length + lb.length;
+  const sim = total ? Math.round(same * 2 / total * 100) : 100;
+  setSummary(added === 0 && removed === 0,
+    `<span class="badge add">+${added} 行</span><span class="badge del">−${removed} 行</span>` +
+    `<span>相同 ${same} 行</span><span>相似度 ${sim}%</span>`);
+}
+
+/* ---------- 文字流（整段比較） ---------- */
+function renderFlow(A, B, o) {
+  const ta = tokenize(A, o.gran), tb = tokenize(B, o.gran);
+  const [ia, ib] = toIds(ta, tb, tokNorm(o));
+  const segs = toSegments(diff(ia, ib), ta, tb);
+  let html = '', added = 0, removed = 0, same = 0;
+  for (const [t, s] of segs) {
+    if (t === 0) { html += esc(s); same += s.length; }
+    else if (t === -1) { html += '<del>' + esc(s) + '</del>'; removed += s.length; }
+    else { html += '<ins>' + esc(s) + '</ins>'; added += s.length; }
+  }
+  out.innerHTML = `<div class="flow">${html || '<span class="placeholder">（兩邊都是空的）</span>'}</div>`;
+  const total = A.length + B.length;
+  const sim = total ? Math.round(same * 2 / total * 100) : 100;
+  setSummary(added === 0 && removed === 0,
+    `<span class="badge add">+${added} 字元</span><span class="badge del">−${removed} 字元</span><span>相似度 ${sim}%</span>`);
+}
+
+function setSummary(identical, stats) {
+  summary.innerHTML = (identical ? '<span class="badge same">✓ 兩段文字相同</span>' : '') + stats +
+    (approx ? '<span class="warn">⚠ 差異過多，部分區塊以整段取代方式顯示</span>' : '');
+}
+
+/* ---------- 主流程 ---------- */
+function opts() {
+  return {
+    view: document.querySelector('input[name="view"]:checked').value,
+    gran: $('#gran').value,
+    ignoreWs: $('#ignoreWs').checked,
+    ignoreCase: $('#ignoreCase').checked,
+    onlyDiff: $('#onlyDiff').checked,
+  };
+}
+
+function updateMeta() {
+  for (const [ta, id] of [[taA, '#metaA'], [taB, '#metaB']]) {
+    const v = ta.value;
+    $(id).textContent = v ? `${v.length.toLocaleString()} 字元 · ${splitLines(v).length.toLocaleString()} 行` : '';
+  }
+}
+
+function compare() {
+  const A = taA.value, B = taB.value, o = opts();
+  approx = false;
+  updateMeta();
+  if (!A && !B) {
+    summary.innerHTML = '';
+    out.innerHTML = '<div class="placeholder">輸入兩段文字後，差異會顯示在這裡。</div>';
+    return;
+  }
+  $('#onlyDiff').disabled = o.view === 'flow';
+  if (o.view === 'flow') renderFlow(A, B, o); else renderLines(A, B, o);
+}
+
+let timer;
+const schedule = () => {
+  clearTimeout(timer);
+  const size = taA.value.length + taB.value.length;
+  timer = setTimeout(compare, size > 200000 ? 600 : 150);
+};
+
+// 設定記憶（只存選項，不存文字內容）
+const SETTINGS_KEY = 'textdiff-settings';
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(opts())); } catch {}
+}
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (!s) return;
+    const r = document.querySelector(`input[name="view"][value="${s.view}"]`);
+    if (r) r.checked = true;
+    if (s.gran) $('#gran').value = s.gran;
+    for (const k of ['ignoreWs', 'ignoreCase', 'onlyDiff']) $('#' + k).checked = !!s[k];
+  } catch {}
+}
+
+taA.addEventListener('input', schedule);
+taB.addEventListener('input', schedule);
+document.querySelectorAll('.toolbar input, .toolbar select').forEach(el =>
+  el.addEventListener('change', () => { saveSettings(); compare(); }));
+
+out.addEventListener('click', e => {
+  const tr = e.target.closest('tr.fold');
+  if (tr) tr.outerHTML = folds[+tr.dataset.fold];
+});
+
+$('#btnSwap').addEventListener('click', () => { [taA.value, taB.value] = [taB.value, taA.value]; compare(); });
+$('#btnClear').addEventListener('click', () => { taA.value = taB.value = ''; compare(); taA.focus(); });
+
+// 檔案讀取：按鈕與拖曳
+const fileInput = $('#fileInput');
+let fileTarget = null;
+function readFile(file, ta) {
+  const reader = new FileReader();
+  reader.onload = () => { ta.value = reader.result; compare(); };
+  reader.readAsText(file);
+}
+document.querySelectorAll('[data-open]').forEach(btn => btn.addEventListener('click', () => {
+  fileTarget = document.getElementById(btn.dataset.open);
+  fileInput.value = '';
+  fileInput.click();
+}));
+fileInput.addEventListener('change', () => { if (fileInput.files[0] && fileTarget) readFile(fileInput.files[0], fileTarget); });
+for (const ta of [taA, taB]) {
+  ta.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); ta.classList.add('drag'); } });
+  ta.addEventListener('dragleave', () => ta.classList.remove('drag'));
+  ta.addEventListener('drop', e => {
+    ta.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) { e.preventDefault(); readFile(f, ta); }
+  });
+}
+
+loadSettings();
+compare();
+})();
+</script>
+</body>
+</html>
